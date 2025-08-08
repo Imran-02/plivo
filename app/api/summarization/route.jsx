@@ -1,94 +1,61 @@
-import { NextResponse } from 'next/server'
-import { extractTextFromPdf } from '@/lib/providers'
-
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-}
-
-async function extractTextFromDocx(file) {
-  // In a real implementation, you would use mammoth here
-  // For now we'll return a placeholder
-  return "Text extracted from DOCX file (install mammoth for full functionality)"
-}
-
-async function extractTextFromUrl(url) {
-  try {
-    const response = await fetch(url)
-    const html = await response.text()
-    // Simple text extraction fallback
-    return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
-  } catch (error) {
-    throw new Error(`Failed to fetch URL: ${error.message}`)
-  }
-}
-
+// In your API route (/api/summarization/route.js)
 export async function POST(request) {
   try {
     const formData = await request.formData()
     const url = formData.get('url')
     const file = formData.get('file')
+    const text = formData.get('text') // Added for docx text
 
-    if (!url && !file) {
-      throw new Error('No input provided - please provide either a URL or file')
+    if (!url && !file && !text) {
+      throw new Error('Please provide either a URL, file, or text')
     }
 
-    let text = ''
+    let extractedText = text || ''
+    let fileType = ''
 
     if (url) {
-      // Basic URL validation
-      if (!url.match(/^https?:\/\/.+/)) {
-        throw new Error('Invalid URL format')
+      try {
+        new URL(url) // Validate URL
+        extractedText = await extractTextFromUrl(url)
+        fileType = 'url'
+      } catch (err) {
+        throw new Error('Invalid URL: ' + err.message)
       }
-      text = await extractTextFromUrl(url)
-    } 
-    else if (file) {
-      // Validate file size (5MB limit)
+    } else if (file) {
       if (file.size > 5 * 1024 * 1024) {
         throw new Error('File size exceeds 5MB limit')
       }
 
-      const fileType = file.type
       const fileName = file.name.toLowerCase()
-
-      if (fileType === 'application/pdf') {
-        text = await extractTextFromPdf(file)
-      } 
-      else if (
-        fileType.includes('document') || 
-        fileName.endsWith('.docx') ||
-        fileName.endsWith('.doc')
-      ) {
-        text = await extractTextFromDocx(file)
-      } 
-      else if (fileType.includes('text')) {
-        text = await file.text()
-      } 
-      else {
-        throw new Error('Unsupported file type. Please upload PDF, DOCX, or text files.')
+      if (file.type === 'application/pdf' || fileName.endsWith('.pdf')) {
+        extractedText = await extractTextFromPdf(file)
+        fileType = 'pdf'
+      } else if (file.type.includes('text')) {
+        extractedText = await file.text()
+        fileType = 'text'
+      } else {
+        throw new Error('Unsupported file type. Please upload PDF or text files.')
       }
     }
 
-    if (!text || text.trim().length < 50) {
+    if (!extractedText || extractedText.trim().length < 50) {
       throw new Error('Extracted text is too short or empty')
     }
 
-    const summary = await summarizeText(text)
+    const summary = await summarizeText(extractedText)
 
-    return NextResponse.json({ 
+    return NextResponse.json({
       success: true,
       summary,
-      characterCount: text.length 
+      characterCount: extractedText.length,
+      fileType
     })
+
   } catch (error) {
     console.error('Summarization error:', error)
     return NextResponse.json(
-      { 
-        success: false,
-        error: error.message || 'Failed to generate summary' 
-      },
-      { status: 500 }
+      { success: false, error: error.message },
+      { status: 400 } // Use 400 for client errors
     )
   }
 }

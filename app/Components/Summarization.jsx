@@ -1,4 +1,6 @@
+'use client'
 import { useState } from 'react'
+import * as mammoth from 'mammoth'
 
 export default function Summarization() {
   const [inputType, setInputType] = useState('file')
@@ -7,24 +9,30 @@ export default function Summarization() {
   const [summary, setSummary] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState(null)
-  const [characterCount, setCharacterCount] = useState(0)
+  const [stats, setStats] = useState({ characterCount: 0, fileType: '' })
 
   const handleFileChange = (e) => {
     setError(null)
     const selectedFile = e.target.files?.[0]
-    
-    if (selectedFile) {
-      if (selectedFile.size > 5 * 1024 * 1024) {
-        setError('File size exceeds 5MB limit')
-        return
-      }
-      setFile(selectedFile)
+    if (!selectedFile) return
+
+    if (selectedFile.size > 5 * 1024 * 1024) {
+      setError('File size exceeds 5MB limit')
+      return
     }
+    setFile(selectedFile)
   }
 
-  const handleUrlChange = (e) => {
-    setError(null)
-    setUrl(e.target.value)
+  const handleUrlChange = (e) => setUrl(e.target.value)
+
+  const extractDocxText = async (file) => {
+    try {
+      const arrayBuffer = await file.arrayBuffer()
+      const result = await mammoth.extractRawText({ arrayBuffer })
+      return result.value
+    } catch (err) {
+      throw new Error('Failed to extract text from DOCX file')
+    }
   }
 
   const handleSubmit = async (e) => {
@@ -34,20 +42,24 @@ export default function Summarization() {
 
     try {
       const formData = new FormData()
+      let text = ''
 
-      if (inputType === 'file') {
-        if (!file) {
-          throw new Error('Please select a file')
+      if (inputType === 'file' && file) {
+        const fileName = file.name.toLowerCase()
+        
+        if (fileName.endsWith('.docx') || fileName.endsWith('.doc')) {
+          text = await extractDocxText(file)
+          formData.append('text', text)
+        } else {
+          formData.append('file', file)
         }
-        formData.append('file', file)
-      } else {
-        if (!url) {
-          throw new Error('Please enter a URL')
-        }
-        if (!url.match(/^https?:\/\/.+/)) {
-          throw new Error('Please enter a valid URL (starting with http:// or https://)')
+      } else if (inputType === 'url' && url) {
+        if (!url.match(/^https?:\/\/.+/i)) {
+          throw new Error('Invalid URL format. Must start with http:// or https://')
         }
         formData.append('url', url)
+      } else {
+        throw new Error('Please provide either a file or URL')
       }
 
       const response = await fetch('/api/summarization', {
@@ -56,16 +68,16 @@ export default function Summarization() {
       })
 
       const data = await response.json()
-      
-      if (!data.success) {
-        throw new Error(data.error)
-      }
+      if (!data.success) throw new Error(data.error)
 
       setSummary(data.summary)
-      setCharacterCount(data.characterCount)
+      setStats({
+        characterCount: data.characterCount,
+        fileType: data.fileType
+      })
     } catch (error) {
       setError(error.message)
-      console.error('Summarization error:', error)
+      console.error('Error:', error)
     } finally {
       setIsProcessing(false)
     }
@@ -73,84 +85,57 @@ export default function Summarization() {
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
-      <h2 className="text-3xl font-bold text-gray-800">Document Summarization</h2>
+      <h1 className="text-3xl font-bold text-gray-800">Document Summarizer</h1>
       
       <div className="flex gap-4 mb-6">
         <button
-          onClick={() => {
-            setInputType('file')
-            setError(null)
-          }}
+          onClick={() => setInputType('file')}
           className={`px-6 py-3 rounded-lg transition-all ${
-            inputType === 'file'
-              ? 'bg-purple-600 text-white shadow-md'
-              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            inputType === 'file' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'
           }`}
         >
           File Upload
         </button>
         <button
-          onClick={() => {
-            setInputType('url')
-            setError(null)
-          }}
+          onClick={() => setInputType('url')}
           className={`px-6 py-3 rounded-lg transition-all ${
-            inputType === 'url'
-              ? 'bg-purple-600 text-white shadow-md'
-              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            inputType === 'url' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'
           }`}
         >
           URL Input
         </button>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6">
+      <form onSubmit={handleSubmit} className="space-y-4">
         {inputType === 'file' ? (
           <div className="space-y-2">
-            <label className="block text-lg font-medium text-gray-700">
-              Upload Document
-            </label>
-            <div className="flex items-center gap-4">
-              <input
-                type="file"
-                accept=".pdf,.doc,.docx,.txt"
-                onChange={handleFileChange}
-                className="block w-full text-sm text-gray-500
-                  file:mr-4 file:py-3 file:px-6
-                  file:rounded-lg file:border-0
-                  file:text-sm file:font-semibold
-                  file:bg-purple-50 file:text-purple-700
-                  hover:file:bg-purple-100
-                  file:transition-all file:duration-200"
-              />
-              {file && (
-                <span className="text-sm text-gray-500">
-                  {file.name} ({(file.size / 1024).toFixed(1)} KB)
-                </span>
-              )}
-            </div>
+            <label className="block text-lg font-medium">Upload Document</label>
+            <input
+              type="file"
+              accept=".pdf,.doc,.docx,.txt"
+              onChange={handleFileChange}
+              className="block w-full file:mr-4 file:py-2 file:px-4 file:rounded file:border file:border-gray-300 file:text-sm file:font-medium file:bg-white file:text-gray-700 hover:file:bg-gray-50"
+            />
             <p className="text-sm text-gray-500">
-              Supported formats: PDF, DOCX, DOC, TXT (Max 5MB)
+              Supports: PDF, DOCX (Max 5MB)
             </p>
           </div>
         ) : (
           <div className="space-y-2">
-            <label className="block text-lg font-medium text-gray-700">
-              Enter Article URL
-            </label>
+            <label className="block text-lg font-medium">Article URL</label>
             <input
               type="url"
               value={url}
               onChange={handleUrlChange}
               placeholder="https://example.com/article"
-              className="w-full p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              className="w-full p-3 border border-gray-300 rounded"
               required
             />
           </div>
         )}
 
         {error && (
-          <div className="p-4 bg-red-50 text-red-700 rounded-lg border border-red-200">
+          <div className="p-3 bg-red-50 text-red-700 rounded border border-red-200">
             {error}
           </div>
         )}
@@ -158,7 +143,7 @@ export default function Summarization() {
         <button
           type="submit"
           disabled={isProcessing || (inputType === 'file' ? !file : !url)}
-          className="w-full px-6 py-4 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex justify-center items-center"
+          className="w-full py-3 px-4 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 flex justify-center items-center"
         >
           {isProcessing ? (
             <>
@@ -175,18 +160,14 @@ export default function Summarization() {
       </form>
 
       {summary && (
-        <div className="mt-8 space-y-4">
-          <div className="flex justify-between items-center">
-            <h3 className="text-2xl font-semibold text-gray-800">Summary</h3>
-            {characterCount > 0 && (
-              <span className="text-sm text-gray-500">
-                {characterCount.toLocaleString()} characters processed
-              </span>
-            )}
+        <div className="mt-8 p-6 bg-gray-50 rounded-lg border border-gray-200">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-semibold">Summary</h2>
+            <span className="text-sm text-gray-500">
+              {stats.characterCount.toLocaleString()} characters
+            </span>
           </div>
-          <div className="p-6 bg-gray-50 rounded-lg border border-gray-200 whitespace-pre-line">
-            {summary}
-          </div>
+          <div className="whitespace-pre-line">{summary}</div>
         </div>
       )}
     </div>
